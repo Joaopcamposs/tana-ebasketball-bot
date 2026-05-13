@@ -2,7 +2,7 @@ services:
   app:
     build: .
     ports:
-      - "8011:8000"
+      - "8012:8000"
     env_file: .env
     environment:
       DATABASE_URL: postgresql+asyncpg://app:app@postgres:5432/app
@@ -22,7 +22,7 @@ services:
       POSTGRES_PASSWORD: app
       POSTGRES_DB: app
     ports:
-      - "54311:5432"
+      - "54312:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:

@@ -4,10 +4,10 @@ install:
 	uv sync
 
 dev:
-	PYTHONPATH=app uv run uvicorn app.main:app --reload --port 8011
+	PYTHONPATH=app uv run uvicorn app.main:app --reload --port 8012
 
 run:
-	PYTHONPATH=app uv run uvicorn app.main:app --host 0.0.0.0 --port 8011
+	PYTHONPATH=app uv run uvicorn app.main:app --host 0.0.0.0 --port 8012
 
 test:
 	uv run pytest -x --tb=short -q --cov=app --cov-report=term-missing

@@ -77,7 +77,7 @@ echo "✅ Postgres rodando"
 echo ""
 echo "🚀 Subindo app em dev mode..."
 echo "   Aguardando servidor iniciar..."
-PYTHONPATH=app uv run uvicorn app.main:app --reload --port 8011 &
+PYTHONPATH=app uv run uvicorn app.main:app --reload --port 8012 &
 APP_PID=$!
 sleep 3
 
@@ -90,20 +90,20 @@ echo "✅ App rodando (PID: $APP_PID)"
 # 7. Testar envio
 echo ""
 echo "📤 Testando envio de mensagem..."
-SEND_RESULT=$(curl -sf -X POST "http://localhost:8011/api/send?text=Setup+completo&reference_key=setup-test")
+SEND_RESULT=$(curl -sf -X POST "http://localhost:8012/api/send?text=Setup+completo&reference_key=setup-test")
 echo "✅ Envio: $SEND_RESULT"
 
 # 8. Testar edição
 echo ""
 echo "✏️  Testando edição de mensagem..."
 sleep 1
-EDIT_RESULT=$(curl -sf -X PUT "http://localhost:8011/api/edit?reference_key=setup-test&text=Setup+completo+%E2%9C%85+editado")
+EDIT_RESULT=$(curl -sf -X PUT "http://localhost:8012/api/edit?reference_key=setup-test&text=Setup+completo+%E2%9C%85+editado")
 echo "✅ Edição: $EDIT_RESULT"
 
 # 9. Testar health
 echo ""
 echo "💚 Health check..."
-HEALTH=$(curl -sf "http://localhost:8011/health")
+HEALTH=$(curl -sf "http://localhost:8012/health")
 echo "✅ Health: $HEALTH"
 
 # Encerrar app
