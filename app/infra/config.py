@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     aceodds_timezone: str = "America/Sao_Paulo"
     totalcorner_timezone: str = "Europe/London"
-    db_schema: str = "esoccer_bot"
+    db_schema: str = "ebasketball_bot"
 
 
 settings = Settings()

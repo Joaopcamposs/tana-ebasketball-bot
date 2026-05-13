@@ -23,19 +23,19 @@ SAMPLE_HTML = """
   <tr><th>Hora de início</th><th>Evento</th></tr>
   <tr>
     <td>14:00</td>
-    <td><a href="/link" title="test">France (Grellz) x Germany (Simaponika)</a></td>
+    <td><a href="/link" title="test">DAL Mavericks (TAAPZ) @ CHA Hornets (BULLSEYE)</a></td>
   </tr>
   <tr>
     <td>14:00</td>
-    <td><a href="/link" title="test">Brazil (KaiZer) x Spain (M4theus)</a></td>
+    <td><a href="/link" title="test">BKN Nets (MALICE) @ TOR Raptors (MYTH)</a></td>
   </tr>
   <tr>
     <td>14:12</td>
-    <td><a href="/link" title="test">Italy (Luca99) x England (JohnD)</a></td>
+    <td><a href="/link" title="test">DEN Nuggets (MARINE) @ LAL Lakers (KING)</a></td>
   </tr>
   <tr>
     <td>18:00</td>
-    <td><a href="/link" title="test">Argentina (PepeG) x Portugal (CR7fan)</a></td>
+    <td><a href="/link" title="test">MIA Heat (FLASH) @ GSW Warriors (SPLASH)</a></td>
   </tr>
 </table>
 </body></html>
@@ -43,8 +43,8 @@ SAMPLE_HTML = """
 
 
 def test_parse_match_text():
-    result = _parse_match_text("France (Grellz) x Germany (Simaponika)")
-    assert result == ("France", "Grellz", "Germany", "Simaponika")
+    result = _parse_match_text("DAL Mavericks (TAAPZ) @ CHA Hornets (BULLSEYE)")
+    assert result == ("CHA Hornets", "BULLSEYE", "DAL Mavericks", "TAAPZ")
 
 
 def test_parse_match_text_invalid():
@@ -92,8 +92,8 @@ async def test_fetch_upcoming_matches_filters_by_window():
         matches = await fetch_upcoming_matches(window_minutes=5)
 
     assert len(matches) == 2
-    assert matches[0].home_player == "Grellz"
-    assert matches[1].home_player == "KaiZer"
+    assert matches[0].home_player == "BULLSEYE"
+    assert matches[1].home_player == "MYTH"
     assert all(m.kickoff.hour == 14 and m.kickoff.minute == 0 for m in matches)
 
 
@@ -121,11 +121,11 @@ async def test_fetch_no_matches_outside_window():
 def test_match_to_dict():
     m = Match(
         kickoff=datetime(2026, 5, 12, 14, 0, tzinfo=BRT),
-        home_team="France",
-        home_player="Grellz",
-        away_team="Germany",
-        away_player="Simaponika",
+        home_team="CHA Hornets",
+        home_player="BULLSEYE",
+        away_team="DAL Mavericks",
+        away_player="TAAPZ",
     )
     d = m.to_dict()
-    assert d["home_player"] == "Grellz"
+    assert d["home_player"] == "BULLSEYE"
     assert "kickoff" in d

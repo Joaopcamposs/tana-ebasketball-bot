@@ -1,4 +1,4 @@
-"""Scraper aceodds — próximos jogos eSoccer Battle 8min."""
+"""Scraper aceodds — próximos jogos E-Basketball H2H GG League 4x5mins."""
 
 import logging
 import re
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 URL = (
     "https://www.aceodds.com/pt/bet365-transmissao-ao-vivo"
-    "/futebol/e-soccer-battle-8-minutos-de-jogo.html"
+    "/basquete/e-basketball-h2h-gg-league-4x5mins.html"
 )
 
 BRT = ZoneInfo("America/Sao_Paulo")
@@ -30,7 +30,7 @@ HEADERS = {
     "Accept-Language": "pt-BR,pt;q=0.9",
 }
 
-_MATCH_RE = re.compile(r"^(.+?)\s*\(([^)]+)\)\s*x\s*(.+?)\s*\(([^)]+)\)$")
+_MATCH_RE = re.compile(r"^(.+?)\s*\(([^)]+)\)\s*@\s*(.+?)\s*\(([^)]+)\)$")
 
 
 @dataclass
@@ -86,14 +86,17 @@ def _parse_date_header(text: str, fallback_date: datetime) -> datetime:
 
 
 def _parse_match_text(text: str) -> tuple[str, str, str, str] | None:
+    """Retorna (home_team, home_player, away_team, away_player).
+    Formato: 'AWAY (player) @ HOME (player)' — grupo 3/4 é home.
+    """
     m = _MATCH_RE.match(text.strip())
     if not m:
         return None
     return (
-        m.group(1).strip(),
-        m.group(2).strip(),
-        m.group(3).strip(),
-        m.group(4).strip(),
+        m.group(3).strip(),  # home_team
+        m.group(4).strip(),  # home_player
+        m.group(1).strip(),  # away_team
+        m.group(2).strip(),  # away_player
     )
 
 

@@ -18,7 +18,7 @@ Cruze o maximo de dados possiveis para gerar um palpite assertivo
 
 Formato da mensagem de palpite:
 ```
-"E-soccer Battle 8 minutos - LIVE @1.5+\n\n"
+"E-basketball H2h 4x5min - LIVE @1.5+\n\n"
 f"🎯 {upcoming_match.home_player} ({upcoming_match.home_team}) vs "
 f"{upcoming_match.away_player} ({upcoming_match.away_team})\n"
 f"⚽️ Gols esperado: {expected_total_goals:.2f}\n"

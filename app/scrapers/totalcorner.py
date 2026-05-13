@@ -1,4 +1,4 @@
-"""Scraper totalcorner — stats, over/under e resultados eSoccer Battle 8min."""
+"""Scraper totalcorner — stats, over/under e resultados eBasketball"""
 
 import logging
 import re

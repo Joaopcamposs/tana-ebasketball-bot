@@ -1,7 +1,7 @@
 [project]
 name = "tana-ebasketball-bot"
 version = "0.1.0"
-description = "Bot para análise e palpites de pontos em jogos eSoccer Basketball 4x5min"
+description = "Bot para análise e palpites de pontos em jogos eBasketball 4x5min"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [

@@ -1,6 +1,6 @@
-# eSoccer Battle Bot
+# eBasketball H2h 4x5min
 
-Bot automatizado para palpites de **eSoccer Battle 8 minutos** (FIFA). Executa a cada 4 minutos: coleta jogos próximos, gera previsão de gols cruzando dados locais e externos, envia palpite no Telegram e atualiza com resultado final (✅/❌).
+Bot automatizado para palpites de **eBasketball 4x 5 minutos** (FIFA). Executa a cada 4 minutos: coleta jogos próximos, gera previsão de gols cruzando dados locais e externos, envia palpite no Telegram e atualiza com resultado final (✅/❌).
 
 ## Stack
 
@@ -76,7 +76,7 @@ over_line = int(expected_total - 1) + 0.5  (mínimo 1.5)
 ### Mensagem no Telegram
 
 ```
-E-soccer Battle 8 minutos - LIVE @1.5+
+E-basketball H2H 4x5min - LIVE @1.5+
 
 🎯 Grellz (France) vs Simaponika (Germany)
 ⚽️ Gols esperado: 5.80
@@ -109,7 +109,7 @@ app/
     aceodds.py             → Scrap próximos jogos
     totalcorner.py         → Scrap stats, over%, resultados (cache 4min)
   jobs/
-    esoccer.py             → Job principal (ciclo completo a cada 4min)
+    ebasketball.py         → Job principal (ciclo completo a cada 4min)
     example.py             → Job modelo (heartbeat)
   infra/
     config.py              → Settings via pydantic-settings (.env)
@@ -128,7 +128,7 @@ tests/                     → Testes unitários (SQLite em memória)
 | Método | Rota | Descrição |
 |--------|------|-----------|
 | `GET` | `/api/health` | Health check |
-| `GET` | `/api/upcoming?window=10` | Próximos jogos eSoccer (BRT) |
+| `GET` | `/api/upcoming?window=10` | Próximos jogos eBasketball (BRT) |
 | `GET` | `/api/player-stats?player=Grellz` | Stats consolidadas (totalcorner) |
 | `GET` | `/api/goal-stats?player=Grellz` | Over% por jogador (totalcorner) |
 | `GET` | `/api/results?player=Grellz&finished_only=true` | Resultados recentes |

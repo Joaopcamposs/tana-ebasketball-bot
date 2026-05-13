@@ -1,8 +1,8 @@
-# Architecture — eSoccer Battle Bot
+# Architecture — eBasketball Battle Bot
 
 ## Visão Geral
 
-Bot automatizado para palpites eSoccer Battle 8 minutos.
+Bot automatizado para palpites eBasketball 4x5 minutos.
 Combina FastAPI (HTTP/API) + scraping (aceodds, totalcorner) + motor de palpites + Telegram Bot.
 Projetado para rodar em **256MB RAM**.
 
@@ -41,7 +41,7 @@ Projetado para rodar em **256MB RAM**.
                └───────────┘    └────────────┘
 ```
 
-## Ciclo Principal (Job esoccer-battle, 240s)
+## Ciclo Principal (Job eBasketball, 240s)
 
 ```
 1. fetch_upcoming_matches(10min)
@@ -80,7 +80,7 @@ app/
     totalcorner.py         → Scrap stats, over%, resultados (cache 4min)
   jobs/
     __init__.py            → Registro de todos os jobs
-    esoccer.py             → Job principal (ciclo completo)
+    ebasketball.py         → Job principal (ciclo completo)
     example.py             → Job modelo (heartbeat)
   infra/
     config.py              → Settings via pydantic-settings (.env)
@@ -95,7 +95,7 @@ tests/
   test_aceodds.py          → Parsing HTML aceodds + filtro por janela
   test_totalcorner.py      → Parsing stats/goals/results + cache
   test_prediction.py       → Motor de palpites (external/default)
-  test_esoccer_job.py      → Formatação e match_key
+  test_ebasketball_job.py  → Formatação e match_key
   test_*.py                → Testes base (handler, service, endpoints, etc)
 ```
 
@@ -159,7 +159,7 @@ SQLAlchemy 2.0 async com asyncpg. Pool: `pool_size=5`, `max_overflow=5`.
 | `predictions` | UUID7 | Palpites (match_key único, resultado, sucesso) |
 
 Tabelas criadas automaticamente no lifespan via `Base.metadata.create_all`.
-Schema isolado via `DB_SCHEMA` (default `esoccer_bot`) — permite multi-tenant no mesmo banco.
+Schema isolado via `DB_SCHEMA` (default `ebasketball_bot`) — permite multi-tenant no mesmo banco.
 
 ## Portas
 
@@ -210,7 +210,7 @@ Horários internos sempre em **BRT** (`America/Sao_Paulo`). Conversão na entrad
 Pontos de conversão:
 - `aceodds.py`: `ACEODDS_TZ` → BRT no `kickoff` de cada `Match`
 - `totalcorner.py`: `SITE_TZ` → BRT no `kickoff_brt` de cada `MatchResult`
-- `esoccer.py`: `_make_match_key` força BRT, `_format_brt_time` força BRT
+- `eBasketball.py`: `_make_match_key` força BRT, `_format_brt_time` força BRT
 - `update_results`: usa `pred.kickoff_brt` (original) na mensagem editada, nunca o horário do resultado
 
 ## Proteções no update_results
@@ -231,4 +231,4 @@ Pontos de conversão:
 | `LOG_LEVEL` | Não | `INFO` | Nível de log |
 | `ACEODDS_TIMEZONE` | Não | `America/Sao_Paulo` | Timezone dos horários do aceodds |
 | `TOTALCORNER_TIMEZONE` | Não | `Europe/London` | Timezone dos horários do totalcorner |
-| `DB_SCHEMA` | Não | `esoccer_bot` | Schema PostgreSQL (vazio=public) |
+| `DB_SCHEMA` | Não | `ebasketball_bot` | Schema PostgreSQL (vazio=public) |

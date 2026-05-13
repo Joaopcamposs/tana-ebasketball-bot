@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 import httpx
 from bs4 import BeautifulSoup
 from fastapi import APIRouter, Depends, HTTPException
-from jobs.esoccer import send_predictions, simulate_e2e, update_results
+from jobs.ebasketball import send_predictions, simulate_e2e, update_results
 from scrapers.aceodds import HEADERS as ACEODDS_HEADERS
 from scrapers.aceodds import URL as ACEODDS_URL
 from scrapers.aceodds import fetch_upcoming_matches
@@ -68,7 +68,7 @@ async def api_pending(
 
 @router.get("/upcoming")
 async def api_upcoming(window: int = 10) -> dict[str, Any]:
-    """Jogos eSoccer Battle nos próximos N minutos (BRT)."""
+    """Jogos eBasketball Battle nos próximos N minutos (BRT)."""
     matches = await fetch_upcoming_matches(window_minutes=window)
     return {
         "count": len(matches),
@@ -110,7 +110,7 @@ async def api_results(
     player: str | None = None,
     finished_only: bool = True,
 ) -> dict[str, Any]:
-    """Resultados recentes eSoccer Battle (totalcorner)."""
+    """Resultados recentes eBasketball (totalcorner)."""
     results = await fetch_results(finished_only=finished_only)
     if player:
         p = player.lower()

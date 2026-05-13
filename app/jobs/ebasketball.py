@@ -1,4 +1,4 @@
-"""Job principal — ciclo completo eSoccer Battle a cada 4 minutos."""
+"""Job principal — ciclo completo eBasketball a cada 4 minutos."""
 
 import logging
 from datetime import datetime
@@ -42,7 +42,7 @@ def _format_prediction_message(pred) -> str:
     )
 
     return (
-        "E-soccer Battle 8 minutos - LIVE @1.5+\n\n"
+        "E-basketball H2h 4x5min - LIVE @1.5+\n\n"
         f"🎯 {m.home_player} ({m.home_team}) vs "
         f"{m.away_player} ({m.away_team})\n"
         f"⚽️ Gols esperado: {pred.expected_total_goals:.2f}\n"
@@ -172,7 +172,7 @@ async def update_results() -> list[dict]:
                     message_id=pred.message_id,
                     parse_mode="HTML",
                     text=(
-                        f"E-soccer Battle 8 minutos - LIVE @1.5+\n\n"
+                        f"E-basketball H2h 4x5min - LIVE @1.5+\n\n"
                         f"🎯 {pred.home_player} ({pred.home_team}) vs "
                         f"{pred.away_player} ({pred.away_team})\n"
                         f"⚽️ Gols esperado: {pred.expected_total_goals:.2f}\n"
@@ -317,7 +317,7 @@ async def simulate_e2e(limit: int = 5) -> list[dict]:
                     message_id=msg_id,
                     parse_mode="HTML",
                     text=(
-                        f"E-soccer Battle 8 minutos - LIVE @1.5+\n\n"
+                        f"E-basketball H2h 4x5min - LIVE @1.5+\n\n"
                         f"🎯 {r.home_player} ({r.home_team}) vs "
                         f"{r.away_player} ({r.away_team})\n"
                         f"⚽️ Gols esperado: {pred.expected_total_goals:.2f}\n"
@@ -358,10 +358,10 @@ async def simulate_e2e(limit: int = 5) -> list[dict]:
     return output
 
 
-@register("esoccer-battle", interval_seconds=240)
-async def esoccer_cycle():
+@register("ebasketball-battle", interval_seconds=240)
+async def ebasketball_cycle():
     """Ciclo completo: gerar palpites + atualizar resultados."""
-    logger.info("Iniciando ciclo eSoccer Battle")
+    logger.info("Iniciando ciclo eBasketball Battle")
     await send_predictions()
     await update_results()
-    logger.info("Ciclo eSoccer Battle concluído")
+    logger.info("Ciclo eBasketball Battle concluído")
