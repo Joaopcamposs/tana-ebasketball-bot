@@ -1,8 +1,10 @@
 """Job principal — ciclo completo eBasketball a cada 4 minutos."""
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
+
+UTC = timezone.utc
 
 from prediction import generate_prediction
 from scheduler import register
@@ -21,7 +23,7 @@ BRT = ZoneInfo("America/Sao_Paulo")
 
 def _format_brt_time(dt: datetime) -> str:
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=BRT)
+        dt = dt.replace(tzinfo=UTC)
     return dt.astimezone(BRT).strftime("%H:%M (BRT)")
 
 
@@ -158,7 +160,7 @@ async def update_results() -> list[dict]:
         for pred in pending:
             kickoff = pred.kickoff_brt
             if kickoff and kickoff.tzinfo is None:
-                kickoff = kickoff.replace(tzinfo=BRT)
+                kickoff = kickoff.replace(tzinfo=UTC)
             if kickoff and kickoff.astimezone(BRT) > now_brt:
                 logger.debug("Prediction %s ainda não iniciou, ignorando", pred.match_key)
                 continue
