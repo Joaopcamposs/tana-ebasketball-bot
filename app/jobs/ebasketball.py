@@ -12,7 +12,7 @@ from telegram import client
 
 from infra.config import settings
 from infra.database import async_session
-from infra.models import PlayerLocalStats, Prediction
+from infra.models import PlayerMatchResult, Prediction
 
 logger = logging.getLogger(__name__)
 
@@ -216,7 +216,7 @@ async def update_results() -> list[dict]:
             except Exception:
                 logger.exception("Falha ao editar mensagem pred=%s", pred.id)
 
-            await _update_local_stats(session, matched)
+            await _store_player_matches(session, matched)
             logger.info(
                 "Resultado atualizado: %s %d-%d %s",
                 pred.match_key,
@@ -241,37 +241,27 @@ async def update_results() -> list[dict]:
     return updated
 
 
-async def _update_local_stats(session, result: MatchResult) -> None:
-    """Atualiza estatísticas locais dos dois jogadores após resultado."""
-    for player, gf, ga in [
-        (result.home_player, result.home_score, result.away_score),
-        (result.away_player, result.away_score, result.home_score),
+async def _store_player_matches(session, result: MatchResult) -> None:
+    """Persiste resultado individual para cada jogador da partida."""
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    for player, pf, pa, opponent in [
+        (result.home_player, result.home_score, result.away_score, result.away_player),
+        (result.away_player, result.away_score, result.home_score, result.home_player),
     ]:
-        stmt = select(PlayerLocalStats).where(PlayerLocalStats.player == player)
-        stats = (await session.execute(stmt)).scalar_one_or_none()
-
-        if not stats:
-            stats = PlayerLocalStats(
+        stmt = (
+            pg_insert(PlayerMatchResult)
+            .values(
+                id=str(__import__("uuid").uuid4()),
                 player=player,
-                matches_played=0,
-                goals_for=0,
-                goals_against=0,
-                wins=0,
-                draws=0,
-                losses=0,
+                opponent=opponent,
+                kickoff_brt=result.kickoff_brt,
+                points_for=pf,
+                points_against=pa,
             )
-            session.add(stats)
-
-        stats.matches_played += 1
-        stats.goals_for += gf
-        stats.goals_against += ga
-
-        if gf > ga:
-            stats.wins += 1
-        elif gf == ga:
-            stats.draws += 1
-        else:
-            stats.losses += 1
+            .on_conflict_do_nothing(constraint="uq_player_kickoff")
+        )
+        await session.execute(stmt)
 
 
 async def simulate_e2e(limit: int = 5) -> list[dict]:
@@ -362,7 +352,7 @@ async def simulate_e2e(limit: int = 5) -> list[dict]:
             except Exception:
                 logger.exception("Simulate e2e: falha edição %s", match_key)
 
-            await _update_local_stats(session, r)
+            await _store_player_matches(session, r)
             await session.commit()
 
             output.append(

@@ -7,13 +7,13 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from jobs.ebasketball import send_predictions, simulate_e2e, update_results
 from scrapers.tipmanager import fetch_all, fetch_results, fetch_upcoming
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from telegram import client as tg_client
 from telegram.service import edit_by_reference, list_pending, send_and_store
 
 from infra.config import settings
 from infra.database import get_session
-from infra.models import PlayerLocalStats
+from infra.models import PlayerMatchResult
 
 _DATE_RE = re.compile(r"^(\d{2})/(\d{2})/(\d{4}),\s*(\d{2}):(\d{2})$")
 _SCORE_RE = re.compile(r"^(\d+)\s*:\s*(\d+)$")
@@ -49,6 +49,29 @@ router = APIRouter(prefix="/api", tags=["api"])
 @router.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "healthy"}
+
+
+@router.get("/bot-info")
+async def api_bot_info() -> dict[str, Any]:
+    """Diagnóstico: info do bot e status do webhook."""
+    me = await tg_client.api_call("getMe")
+    webhook = await tg_client.api_call("getWebhookInfo")
+    return {
+        "polling_mode": settings.telegram_polling,
+        "bot": me.get("result", {}),
+        "webhook": webhook.get("result", {}),
+    }
+
+
+@router.post("/bot-webhook")
+async def api_set_webhook(url: str) -> dict[str, Any]:
+    """Registra webhook no Telegram. url = URL pública completa do app."""
+    webhook_url = f"{url.rstrip('/')}{settings.webhook_path}"
+    params: dict[str, Any] = {"url": webhook_url}
+    if settings.telegram_webhook_secret:
+        params["secret_token"] = settings.telegram_webhook_secret
+    result = await tg_client.api_call("setWebhook", **params)
+    return {"webhook_url": webhook_url, "result": result.get("result")}
 
 
 @router.post("/send")
@@ -178,57 +201,77 @@ async def api_edit(
 async def api_preload_stats(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    """Lê results_pre_load.md e popula PlayerLocalStats no banco."""
+    """Lê results_pre_load.md e insere partidas individuais em PlayerMatchResult."""
+    from datetime import datetime
+    from typing import cast
+    from zoneinfo import ZoneInfo
+
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    from sqlalchemy.engine import CursorResult
+
+    brt = ZoneInfo("America/Sao_Paulo")
+
     if not _PRELOAD_FILE.exists():
         raise HTTPException(404, f"Arquivo não encontrado: {_PRELOAD_FILE}")
 
-    entries = _parse_preload(_PRELOAD_FILE)
-    if not entries:
-        raise HTTPException(422, "Nenhum resultado encontrado no arquivo")
+    lines = [line.strip() for line in _PRELOAD_FILE.read_text().splitlines() if line.strip()]
+    _date_re_full = re.compile(r"^(\d{2})/(\d{2})/(\d{4}),\s*(\d{2}):(\d{2})$")
 
-    players_updated: dict[str, dict] = {}
+    inserted = 0
+    skipped = 0
+    i = 0
+    while i < len(lines):
+        m = _date_re_full.match(lines[i])
+        if not m:
+            i += 1
+            continue
+        if i + 6 >= len(lines):
+            break
 
-    for home_player, home_score, away_player, away_score in entries:
-        for player, gf, ga in [
-            (home_player, home_score, away_score),
-            (away_player, away_score, home_score),
+        day, month, year, hour, minute = (int(g) for g in m.groups())
+        kickoff = datetime(year, month, day, hour, minute, tzinfo=brt)
+
+        home_player = lines[i + 1]
+        score_line = lines[i + 3]
+        away_player = lines[i + 4]
+        ms = _SCORE_RE.match(score_line)
+        if not ms:
+            i += 1
+            continue
+
+        home_score, away_score = int(ms.group(1)), int(ms.group(2))
+
+        for player, pf, pa, opponent in [
+            (home_player, home_score, away_score, away_player),
+            (away_player, away_score, home_score, home_player),
         ]:
-            stmt = select(PlayerLocalStats).where(PlayerLocalStats.player == player)
-            stats = (await session.execute(stmt)).scalar_one_or_none()
-            if not stats:
-                stats = PlayerLocalStats(
+            import uuid as _uuid
+
+            stmt = (
+                pg_insert(PlayerMatchResult)
+                .values(
+                    id=str(_uuid.uuid4()),
                     player=player,
-                    matches_played=0,
-                    goals_for=0,
-                    goals_against=0,
-                    wins=0,
-                    draws=0,
-                    losses=0,
+                    opponent=opponent,
+                    kickoff_brt=kickoff,
+                    points_for=pf,
+                    points_against=pa,
                 )
-                session.add(stats)
-
-            stats.matches_played += 1
-            stats.goals_for += gf
-            stats.goals_against += ga
-            if gf > ga:
-                stats.wins += 1
-            elif gf == ga:
-                stats.draws += 1
+                .on_conflict_do_nothing(constraint="uq_player_kickoff")
+            )
+            cursor = cast(CursorResult, await session.execute(stmt))
+            if cursor.rowcount:
+                inserted += 1
             else:
-                stats.losses += 1
+                skipped += 1
 
-            players_updated[player] = {
-                "matches_played": stats.matches_played,
-                "avg_pf": round(stats.goals_for / stats.matches_played, 2),
-                "avg_pa": round(stats.goals_against / stats.matches_played, 2),
-            }
+        i += 7
 
     await session.commit()
 
     return {
-        "parsed": len(entries),
-        "players": len(players_updated),
-        "stats": players_updated,
+        "inserted": inserted,
+        "skipped_duplicates": skipped,
     }
 
 

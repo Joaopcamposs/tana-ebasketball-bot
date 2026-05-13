@@ -13,8 +13,8 @@ test:
 	uv run pytest -x --tb=short -q --cov=app --cov-report=term-missing
 
 lint:
-	uv run ruff check .
-	uv run ty check
+	uv run ruff check . --fix
+	uv run ty check --fix
 
 format:
 	uv run ruff format . && uv run ruff check --fix .

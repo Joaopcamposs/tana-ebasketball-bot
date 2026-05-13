@@ -1,14 +1,13 @@
-# eBasketball H2h 4x5min
+# eBasketball H2h 4x5min Bot
 
-Bot automatizado para palpites de **eBasketball 4x 5 minutos** (FIFA). Executa a cada 4 minutos: coleta jogos próximos, gera previsão de gols cruzando dados locais e externos, envia palpite no Telegram e atualiza com resultado final (✅/❌).
+Bot automatizado para palpites de **eBasketball H2h 4x5min** (NBA 2K). Executa a cada 4 minutos: coleta jogos próximos, gera previsão de pontos cruzando dados locais, envia palpite no Telegram e atualiza com resultado final (✅/❌).
 
 ## Stack
 
 - **Python 3.14** / **uv** / **ruff**
-- **FastAPI** com lifespan e uvloop
+- **FastAPI** com lifespan
 - **SQLAlchemy 2.0** async com asyncpg (Postgres)
-- **httpx** como cliente HTTP (Telegram API + scraping)
-- **BeautifulSoup + lxml** para parsing HTML
+- **httpx** + **BeautifulSoup + lxml** para scraping
 - **Docker** multi-stage com limite 256MB RAM
 - **Scheduler** interno (asyncio) para rotinas periódicas
 
@@ -20,7 +19,7 @@ make install
 
 # 2. Copiar e configurar variáveis
 cp .env.example .env
-# Preencha: TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID
+# Preencha: TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID, DATABASE_URL
 
 # 3. Subir banco
 docker compose up postgres -d
@@ -30,9 +29,8 @@ make dev
 
 # 5. Testar scraping
 curl "http://localhost:8012/api/upcoming"
-curl "http://localhost:8012/api/player-stats"
-curl "http://localhost:8012/api/goal-stats"
 curl "http://localhost:8012/api/results"
+curl "http://localhost:8012/api/all"
 ```
 
 ## Como Funciona
@@ -41,61 +39,74 @@ curl "http://localhost:8012/api/results"
 ┌─────────────────────────────────────────────────────────────────┐
 │                    Ciclo a cada 4 minutos                       │
 │                                                                 │
-│  1. Scrap aceodds ──→ jogos próximos 10 min                    │
-│  2. Scrap totalcorner (cache 4min) ──→ stats + over% + results │
-│  3. Motor de palpites ──→ expected goals + linha over           │
+│  1. Scrap tipmanager.net ──→ próximos jogos + resultados       │
+│  2. Filtro janela: kickoff nos próximos 10 min                 │
+│  3. Motor de palpites ──→ expected_total + over_line           │
+│     └→ sem dados: posta jogo sem palpite, acumula stats        │
 │  4. Envia no Telegram ──→ salva Prediction (match_key único)   │
 │  5. Consulta resultados ──→ edita mensagem com ✅/❌            │
 │  6. Atualiza PlayerLocalStats ──→ alimenta dados locais        │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Fontes de dados
+### Fonte de dados
 
 | Fonte | URL | Dados |
 |-------|-----|-------|
-| **aceodds** | `aceodds.com/.../e-soccer-battle-8-minutos-de-jogo.html` | Próximos jogos (hora, times, jogadores) |
-| **totalcorner** | `totalcorner.com/league/view/12995/end/...` | Stats (W/D/L, GF/GA), over% (1.5–10.5), resultados 48h |
-| **banco local** | `player_local_stats` | Stats acumuladas dos jogadores (atualizado a cada resultado) |
+| **tipmanager** | `tipmanager.net/pt/sports/nba2k/leagues/7/h2h-gg-league` | Próximos jogos + últimos 10 resultados com placar |
+| **banco local** | `player_local_stats` | Stats acumuladas por jogador (atualizado a cada resultado) |
 
 ### Motor de palpites
 
-Para cada jogador no confronto:
-1. Se tem **20+ jogos** no banco local → usa médias locais
-2. Senão → usa stats externas do totalcorner
-3. Sem dados → fallback conservador (avg 2.8 GF / 2.5 GA)
+Requer dados locais de ambos os jogadores. Se faltarem, posta o jogo sem palpite e acumula o resultado no banco quando finalizar.
 
-Cálculo:
 ```
-home_expected = (home_avg_gf + away_avg_ga) / 2
-away_expected = (away_avg_gf + home_avg_ga) / 2
+home_expected = (home_avg_pf + away_avg_pa) / 2
+away_expected = (away_avg_pf + home_avg_pa) / 2
 expected_total = home_expected + away_expected
-over_line = int(expected_total - 1) + 0.5  (mínimo 1.5)
+over_line = max(90.5, round((expected_total - 7.5) × 2) / 2)
 ```
 
 ### Mensagem no Telegram
 
+Antes do resultado:
 ```
-E-basketball H2H 4x5min - LIVE @1.5+
+E-basketball H2h 4x5min - OVER @1.5+
 
 🎯 Grellz (France) vs Simaponika (Germany)
-⚽️ Gols esperado: 5.80
-🥅 Over 4.5 gols
-🕒 14:00
+🕒 14:00 (BRT)
+🏀 Total esperado: 107.4 pts
+📈 Over 99.5
 
-Análise:
-Grellz: [média marcada: 3.60 | média sofrida: 2.40]
-Simaponika: [média marcada: 3.00 | média sofrida: 2.60]
-Frequência de gols acima de 4.5 (75%)
+📝Análise:
+👨🏻 Grellz: AVG [PF: 56.2 | PA: 48.3]
+🧔🏻 Simaponika: AVG [PF: 53.1 | PA: 49.8]
+Total esperado: 107.4 pts
 ```
 
 Após resultado:
 ```
-...
-Resultado: 3 - 2 (total: 5)
+E-basketball H2h 4x5min
+
+🎯 Grellz (France) vs Simaponika (Germany)
+🕒 14:00 (BRT)
+🏀 Total esperado: 107.4 pts
+📈 Over 99.5
+
+Resultado: 58 - 51 (total: 109)
 
 ✅
 ```
+
+### Comandos do Bot no Telegram
+
+| Comando | Ação |
+|---------|------|
+| `/palpites` | Envia palpites de todos os jogos upcoming |
+| `/resultados` | Atualiza predictions pendentes com resultado |
+| `/stats <jogador>` | Estatísticas acumuladas do jogador |
+| `/start` | Lista de comandos |
+| `/ping` | Health check |
 
 ## Estrutura
 
@@ -104,20 +115,18 @@ app/
   main.py                  → Entry point, lifespan, webhook
   routes.py                → Endpoints API (/api/*)
   scheduler.py             → Scheduler asyncio para jobs periódicos
-  prediction.py            → Motor de palpites (cruza dados locais/externos)
+  prediction.py            → Motor de palpites (dados locais)
   scrapers/
-    aceodds.py             → Scrap próximos jogos
-    totalcorner.py         → Scrap stats, over%, resultados (cache 4min)
+    tipmanager.py          → Scrap próximos jogos + resultados
   jobs/
     ebasketball.py         → Job principal (ciclo completo a cada 4min)
-    example.py             → Job modelo (heartbeat)
   infra/
     config.py              → Settings via pydantic-settings (.env)
-    database.py            → Engine async + session factory
+    database.py            → Engine async + session factory (NullPool em cloud)
     models.py              → SentMessage, PlayerLocalStats, Prediction
   telegram/
-    client.py              → Cliente HTTP → Telegram API (retry + HTML)
-    handler.py             → Processa updates (polling ou webhook)
+    client.py              → Cliente HTTP → Telegram API (retry 429)
+    handler.py             → Comandos do bot (/palpites /resultados /stats)
     polling.py             → Long polling para dev local
     service.py             → Envio/edição com persistência e status
 tests/                     → Testes unitários (SQLite em memória)
@@ -128,10 +137,13 @@ tests/                     → Testes unitários (SQLite em memória)
 | Método | Rota | Descrição |
 |--------|------|-----------|
 | `GET` | `/api/health` | Health check |
-| `GET` | `/api/upcoming?window=10` | Próximos jogos eBasketball (BRT) |
-| `GET` | `/api/player-stats?player=Grellz` | Stats consolidadas (totalcorner) |
-| `GET` | `/api/goal-stats?player=Grellz` | Over% por jogador (totalcorner) |
-| `GET` | `/api/results?player=Grellz&finished_only=true` | Resultados recentes |
+| `GET` | `/api/upcoming` | Próximos jogos scrapeados |
+| `GET` | `/api/results?player=nome` | Últimos 10 resultados |
+| `GET` | `/api/all` | Upcoming + resultados numa requisição |
+| `POST` | `/api/predictions/send?window=N` | Força envio de palpites (sem `window` = todos) |
+| `POST` | `/api/predictions/update` | Força atualização de resultados pendentes |
+| `POST` | `/api/predictions/simulate?limit=5` | Teste e2e com resultados reais |
+| `POST` | `/api/admin/preload-stats` | Popula PlayerLocalStats a partir de `results_pre_load.md` |
 | `POST` | `/api/send` | Envia mensagem ao canal |
 | `PUT` | `/api/edit` | Edita mensagem por `reference_key` |
 | `GET` | `/api/pending` | Mensagens pendentes |
@@ -145,8 +157,8 @@ tests/                     → Testes unitários (SQLite em memória)
 |-------|------|-----------|
 | `player` | str (PK) | Nome do jogador |
 | `matches_played` | int | Total de partidas |
-| `goals_for` | int | Gols marcados |
-| `goals_against` | int | Gols sofridos |
+| `goals_for` | int | Pontos marcados |
+| `goals_against` | int | Pontos sofridos |
 | `wins/draws/losses` | int | Resultados |
 | `avg_goals_for` | property | `goals_for / matches_played` |
 | `avg_goals_against` | property | `goals_against / matches_played` |
@@ -156,29 +168,30 @@ tests/                     → Testes unitários (SQLite em memória)
 | Campo | Tipo | Descrição |
 |-------|------|-----------|
 | `id` | UUID7 | PK |
-| `match_key` | str (unique) | Deduplicação: `YYYYMMDD_HHMM_player1_player2` |
-| `kickoff_brt` | datetime | Horário do jogo (BRT) |
+| `match_key` | str (unique) | `YYYYMMDD_HHMM_player1_player2` |
+| `kickoff_brt` | datetime | Horário do jogo (UTC no DB, exibido em BRT) |
 | `home/away_team` | str | Seleções |
 | `home/away_player` | str | Jogadores |
-| `expected_total_goals` | float | Previsão de gols totais |
-| `over_line` | float | Linha over recomendada |
+| `expected_total_goals` | float\|null | Previsão de pontos totais (null = sem dados) |
+| `over_line` | float\|null | Linha over recomendada (null = sem dados) |
 | `message_id` | bigint | ID da mensagem no Telegram |
 | `status` | str | `pending` → `done` |
-| `home/away_goals` | int | Resultado real |
-| `success` | bool | `total_goals > over_line` |
+| `home/away_goals` | int | Placar real |
+| `success` | bool\|null | `total > over_line` (null = sem palpite) |
 
 ## Variáveis de Ambiente
 
-| Variável | Descrição | Exemplo                                            |
-|----------|-----------|----------------------------------------------------|
-| `TELEGRAM_BOT_TOKEN` | Token do @BotFather | `123456:ABC-DEF`                                   |
-| `TELEGRAM_WEBHOOK_SECRET` | Secret para webhook | `openssl rand -hex 32`                             |
-| `TELEGRAM_CHANNEL_ID` | ID do canal alvo | `-1001234567890`                                   |
-| `DATABASE_URL` | Connection string Postgres | `postgresql+asyncpg://app:app@localhost:54312/app` |
-| `TELEGRAM_POLLING` | `true` = polling, `false` = webhook | `true`                                             |
-| `LOG_LEVEL` | Nível de log | `INFO`                                             |
+| Variável | Obrigatória | Descrição |
+|----------|-------------|-----------|
+| `TELEGRAM_BOT_TOKEN` | Sim | Token do @BotFather |
+| `TELEGRAM_CHANNEL_ID` | Sim | ID do canal (ex: `-1001234567890`) |
+| `DATABASE_URL` | Sim | `postgresql+asyncpg://user:pass@host/db` |
+| `TELEGRAM_WEBHOOK_SECRET` | Não | Secret para validar webhook |
+| `TELEGRAM_POLLING` | Não | `true` = polling (dev), `false` = webhook (prod) |
+| `LOG_LEVEL` | Não | `INFO` (default) |
+| `DB_SCHEMA` | Não | Schema PostgreSQL — default `ebasketball_bot` |
 
-## Comandos
+## Comandos Make
 
 | Comando | Descrição |
 |---------|-----------|
@@ -193,10 +206,18 @@ tests/                     → Testes unitários (SQLite em memória)
 | `make clean` | Remove volumes e cache |
 | `make resetdb` | Recria banco do zero |
 
-## Testes
+## Pré-carga de dados históricos
 
-```bash
-make test
+Coloque resultados passados em `app/results_pre_load.md` no formato:
+
+```
+DD/MM/YYYY, HH:MM
+Home Player
+Home Team
+HH : AA
+Away Player
+Away Team
+H2H GG League
 ```
 
-Testes rodam em **SQLite em memória** — Postgres nunca é tocado. Telegram API mockada. Scrapers testados com HTML fixture.
+Depois dispare `POST /api/admin/preload-stats` para popular `PlayerLocalStats` sem criar predictions.

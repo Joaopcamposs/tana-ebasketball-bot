@@ -1,172 +1,176 @@
-# Architecture — eBasketball Battle Bot
+# Architecture — eBasketball H2h 4x5min Bot
 
 ## Visão Geral
 
-Bot automatizado para palpites eBasketball 4x5 minutos.
-Combina FastAPI (HTTP/API) + scraping (aceodds, totalcorner) + motor de palpites + Telegram Bot.
-Projetado para rodar em **256MB RAM**.
+Bot automatizado para palpites eBasketball H2h 4x5min (NBA 2K).
+Fonte única: tipmanager.net. Motor de palpites baseado em stats locais acumuladas.
+Projetado para rodar em 256MB RAM em cloud (NullPool, sem conexões persistentes).
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│                           FastAPI App                                │
-│                                                                      │
-│  ┌────────────┐  ┌────────────────┐  ┌────────────────────┐         │
-│  │ /api/health│  │ /api/upcoming  │  │ /webhook/telegram  │         │
-│  │ /api/stats │  │ /api/results   │  └────────┬───────────┘         │
-│  └────────────┘  └───────┬────────┘           │                     │
-│                          │                    │                      │
-│  ┌───────────────────────▼────────────────────▼──────────────┐      │
-│  │                    Scrapers (cache 4min)                   │      │
-│  │  aceodds.py ─── próximos jogos                            │      │
-│  │  totalcorner.py ─── stats + over% + resultados            │      │
-│  └───────────────────────┬───────────────────────────────────┘      │
-│                          │                                           │
-│  ┌───────────────────────▼───────────────────────────────────┐      │
-│  │                  prediction.py                             │      │
-│  │  PlayerLocalStats (20+ jogos) → dados locais              │      │
-│  │  totalcorner stats           → dados externos (fallback)  │      │
-│  │  → expected_total_goals + over_line                       │      │
-│  └───────────────────────┬───────────────────────────────────┘      │
-│                          │                                           │
-│  ┌──────────┐ ┌──────────▼──────┐  ┌──────────────────────┐        │
-│  │scheduler │ │ telegram/       │  │  infra/models.py     │        │
-│  │ + jobs   │ │ client+service  │  │  Prediction          │        │
-│  └────┬─────┘ └──────┬──────────┘  │  PlayerLocalStats    │        │
-│       │              │              │  SentMessage         │        │
-└───────┼──────────────┼──────────────┼──────────────────────┘        │
-        │              │              │                                │
-        │      ┌───────▼──┐    ┌─────▼──────┐                        │
-        └─────►│ Telegram  │    │ PostgreSQL │                        │
-               │ Bot API   │    │  :54312    │                        │
+┌───────────────────────────────────────────────────────────────┐
+│                        FastAPI App                            │
+│                                                               │
+│  ┌──────────┐  ┌──────────────┐  ┌──────────────────────┐   │
+│  │ /api/    │  │ /webhook/    │  │  Telegram Polling     │   │
+│  │ routes   │  │ telegram     │  │  (dev local)          │   │
+│  └────┬─────┘  └──────┬───────┘  └──────────┬────────────┘   │
+│       │               │                     │                │
+│       └───────────────▼─────────────────────▼──────┐        │
+│                    handler.py                       │        │
+│              /palpites /resultados /stats           │        │
+│                        │                            │        │
+│  ┌─────────────────────▼────────────────────────┐   │        │
+│  │            scrapers/tipmanager.py             │   │        │
+│  │   fetch_upcoming() + fetch_results()          │   │        │
+│  └─────────────────────┬────────────────────────┘   │        │
+│                        │                            │        │
+│  ┌─────────────────────▼────────────────────────┐   │        │
+│  │               prediction.py                   │   │        │
+│  │   PlayerLocalStats → expected_total + over    │   │        │
+│  │   sem dados → None (posta sem palpite)        │   │        │
+│  └─────────────────────┬────────────────────────┘   │        │
+│                        │                            │        │
+│  ┌──────────┐  ┌───────▼──────┐  ┌───────────────┐ │        │
+│  │scheduler │  │ telegram/    │  │ infra/models  │ │        │
+│  │ + jobs   │  │ client       │  │ Prediction    │ │        │
+│  └────┬─────┘  └──────┬───────┘  │ PlayerLocal.. │ │        │
+└───────┼───────────────┼──────────┴───────────────┘─┘        │
+        │               │                                      │
+        │      ┌────────▼──┐    ┌────────────┐                │
+        └─────►│ Telegram  │    │ PostgreSQL │                │
+               │  Bot API  │    │            │                │
                └───────────┘    └────────────┘
 ```
 
 ## Ciclo Principal (Job eBasketball, 240s)
 
 ```
-1. fetch_upcoming_matches(10min)
-   └→ aceodds: HTML → lista de Match(kickoff, teams, players)
+1. fetch_all() → tipmanager.net
+   ├→ upcoming: próximos jogos com kickoff, times, jogadores
+   └→ results: últimos 10 com placar
 
-2. Para cada match (deduplicação via match_key):
+2. Filtro janela: kickoff entre (agora - 4min) e (agora + 10min)
+
+3. Para cada match (deduplicação via match_key):
    └→ generate_prediction(session, match)
-      ├→ _get_local_stats(player) — banco local
-      ├→ fetch_player_stats() — totalcorner (cache)
-      ├→ fetch_goal_stats() — totalcorner (cache)
-      └→ PredictionResult(expected_total, over_line, over_pct)
+      ├→ tem stats locais de ambos → PredictionResult(expected_total, over_line)
+      └→ sem dados → None → posta jogo sem palpite ("📊 Coletando dados...")
 
-3. send_message(chat_id, texto formatado)
+4. send_message(chat_id, texto)
    └→ Prediction salvo: status=pending, message_id=X
 
-4. fetch_results(finished_only=True)
-   └→ totalcorner: resultados das últimas 48h
-
-5. Para cada Prediction pendente com resultado:
-   └→ editMessageText com resultado + ✅/❌
-   └→ _update_local_stats(home_player, away_player)
-   └→ Prediction: status=done, success=True/False
+5. Para cada Prediction pendente:
+   ├→ busca resultado em fetch_results() por home_player + away_player
+   ├→ editMessageText com resultado + ✅/❌
+   ├→ _update_local_stats(home, away) → atualiza PlayerLocalStats
+   └→ Prediction: status=done
 ```
 
 ## Estrutura de Arquivos
 
 ```
 app/
-  main.py                  → Entry point, lifespan, webhook
-  routes.py                → APIRouter /api/* (upcoming, stats, results, etc)
+  main.py                  → Entry point, lifespan, webhook/polling
+  routes.py                → APIRouter /api/*
   scheduler.py             → Registro e execução de jobs periódicos
-  prediction.py            → Motor de palpites (local vs external vs default)
+  prediction.py            → Motor de palpites (local stats only)
   scrapers/
-    __init__.py
-    aceodds.py             → Scrap próximos jogos (HTML server-side)
-    totalcorner.py         → Scrap stats, over%, resultados (cache 4min)
+    tipmanager.py          → Scrap tipmanager.net (upcoming + results)
   jobs/
-    __init__.py            → Registro de todos os jobs
-    ebasketball.py         → Job principal (ciclo completo)
-    example.py             → Job modelo (heartbeat)
+    ebasketball.py         → Ciclo: send_predictions + update_results
   infra/
-    config.py              → Settings via pydantic-settings (.env)
-    database.py            → Engine async + session factory
+    config.py              → Settings via pydantic-settings
+    database.py            → Engine async (pool local / NullPool cloud)
     models.py              → SentMessage, PlayerLocalStats, Prediction
   telegram/
-    client.py              → Cliente HTTP (httpx) → Telegram API
-    handler.py             → Processa updates do Telegram
+    client.py              → httpx → Telegram Bot API (retry 429)
+    handler.py             → Comandos: /palpites /resultados /stats
     polling.py             → Long polling para dev local
-    service.py             → Envio/edição com persistência + status
-tests/
-  test_aceodds.py          → Parsing HTML aceodds + filtro por janela
-  test_totalcorner.py      → Parsing stats/goals/results + cache
-  test_prediction.py       → Motor de palpites (external/default)
-  test_ebasketball_job.py  → Formatação e match_key
-  test_*.py                → Testes base (handler, service, endpoints, etc)
+    service.py             → send_and_store, edit_by_reference
 ```
 
-## Scrapers
+## Scraper — tipmanager.py
 
-### aceodds.py
-
-- **Fonte**: HTML server-side (sem JS)
-- **Tabela**: `<table class="table">` com rows `<tr>` contendo hora + link com nomes
-- **Formato nomes**: `Time (Player) x Time (Player)`
-- **Timezone**: configurável via `ACEODDS_TIMEZONE` (aceodds adapta horários pelo IP do servidor)
-- **Sem cache** (dados mudam a cada minuto)
-- **Conversão**: horário do site (`ACEODDS_TZ`) → BRT (`America/Sao_Paulo`)
-
-### totalcorner.py
-
-- **Fonte**: HTML server-side
-- **3 tabelas** extraídas de uma única página:
-  1. `stats_table[0]` — Player Statistics (MP, W/D/L, GF/GA, avg, points)
-  2. `stats_table[1]` — Total Goals Statistics (MP, avg GF/GA, over 1.5–10.5 %)
-  3. `background_table[-1]` — Schedule and Results (data, status, teams, placar)
-- **Cache**: HTML em memória, TTL 30s, compartilhado entre as 3 funções
-- **Timezone**: configurável via `TOTALCORNER_TIMEZONE` (default `Europe/London`, BST no verão = GMT+1)
-- **Conversão**: horário do site (`SITE_TZ`) → BRT (`America/Sao_Paulo`)
+- **Fonte**: HTML server-side, uma única requisição por ciclo
+- **Tabelas**: `<table>` — índice 0 = upcoming, índice 1 = results
+- **Upcoming**: rows com `aria-label` para times/jogadores + `<span>` com hora
+- **Results**: rows com `aria-label` + `div.bg-accent` com placar home/away
+- **Timezone**: site exibe UTC → convertido para BRT na ingestão
+- **Sem cache** — ciclo de 4min já espaça as requisições
 
 ## Motor de Palpites
 
-### Hierarquia de dados
+### Fontes
 
 ```
-1. Dados locais (PlayerLocalStats, 20+ jogos) ←── melhor
-2. Dados externos (totalcorner PlayerStats)   ←── fallback
-3. Valores default (2.8 GF / 2.5 GA)         ←── último recurso
+PlayerLocalStats (banco) ←── única fonte
+sem dados → retorna None → jogo postado sem palpite
 ```
 
 ### Cálculo
 
 ```python
-home_expected = (home_avg_gf + away_avg_ga) / 2
-away_expected = (away_avg_gf + home_avg_ga) / 2
+home_expected = (home_avg_pf + away_avg_pa) / 2
+away_expected = (away_avg_pf + home_avg_pa) / 2
 expected_total = home_expected + away_expected
-over_line = max(1.5, int(expected_total - 1) + 0.5)
+over_line = max(90.5, round((expected_total - 7.5) * 2) / 2)
 ```
 
 ### Deduplicação
 
-`match_key = f"{kickoff:%Y%m%d_%H%M}_{home_player}_{away_player}"`
+`match_key = f"{kickoff_brt:%Y%m%d_%H%M}_{home_player}_{away_player}"`
 
-Constraint `UNIQUE` no banco. Se `match_key` já existe, palpite é ignorado.
+Constraint `UNIQUE` no banco. Prediction existente → ciclo ignora o jogo.
 
 ## Banco de Dados
 
-SQLAlchemy 2.0 async com asyncpg. Pool: `pool_size=5`, `max_overflow=5`.
+SQLAlchemy 2.0 async com asyncpg.
+
+**Pool**: `pool_size=5 / max_overflow=5` para localhost. `NullPool` para cloud (detectado por ausência de `localhost/127.0.0.1/0.0.0.0` na URL).
+
+**Timezone**: `SET timezone TO 'UTC'` injetado em toda conexão via `event.listens_for(connect)`. asyncpg retorna datetimes naive em UTC — `_format_brt_time` trata como UTC antes de converter para BRT.
 
 ### Tabelas
 
 | Tabela | PK | Descrição |
 |--------|-----|-----------|
-| `sent_messages` | UUID7 | Mensagens enviadas (Telegram message_id + status) |
-| `player_local_stats` | player (str) | Stats acumuladas por jogador |
-| `predictions` | UUID7 | Palpites (match_key único, resultado, sucesso) |
+| `sent_messages` | UUID7 | Mensagens enviadas com reference_key |
+| `player_local_stats` | player (str) | Stats acumuladas (PF, PA, W/D/L) |
+| `predictions` | UUID7 | Palpites com resultado e sucesso |
 
-Tabelas criadas automaticamente no lifespan via `Base.metadata.create_all`.
-Schema isolado via `DB_SCHEMA` (default `ebasketball_bot`) — permite multi-tenant no mesmo banco.
+Schema isolado via `DB_SCHEMA` (default `ebasketball_bot`).
+Tabelas criadas no lifespan via `Base.metadata.create_all`.
 
-## Portas
+## Telegram
 
-| Serviço | Porta externa | Porta interna |
-|---------|---------------|---------------|
-| FastAPI | 8012          | 8000 |
-| PostgreSQL | 54312         | 5432 |
+### Modos de operação
+
+| Modo | Quando usar | Env |
+|------|------------|-----|
+| **Polling** | Dev local, sem URL pública | `TELEGRAM_POLLING=true` |
+| **Webhook** | Produção com HTTPS | `TELEGRAM_POLLING=false` |
+
+### Comandos disponíveis
+
+| Comando | Handler | Ação |
+|---------|---------|------|
+| `/palpites` | `_cmd_palpites` | `send_predictions(window_minutes=None)` |
+| `/resultados` | `_cmd_resultados` | `update_results()` |
+| `/stats <nome>` | `_cmd_stats` | Query `PlayerLocalStats ILIKE %nome%` |
+| `/start` | inline | Lista de comandos |
+| `/ping` | inline | pong |
+
+## Timezone
+
+Todos os horários internos armazenados e processados em UTC. Exibição em BRT.
+
+| Ponto | Comportamento |
+|-------|--------------|
+| tipmanager.py `_parse_date` | Interpreta hora do site como UTC → converte para BRT |
+| `_format_brt_time` | Naive datetime → assume UTC → converte para BRT |
+| DB `SET timezone TO 'UTC'` | asyncpg retorna naives UTC consistentes |
+| `match_key` | Usa `kickoff_brt` (já convertido) |
+| Mensagem editada | Usa `pred.kickoff_brt` do banco (não o horário do resultado) |
 
 ## Camadas
 
@@ -174,11 +178,12 @@ Schema isolado via `DB_SCHEMA` (default `ebasketball_bot`) — permite multi-ten
 |--------|---------|------------------|
 | **HTTP** | `main.py` | Lifespan, webhook, inclui router |
 | **API** | `routes.py` | Endpoints de negócio |
+| **Bot** | `telegram/handler.py` | Comandos Telegram |
 | **Scheduler** | `scheduler.py` | Registro e execução de jobs |
-| **Jobs** | `jobs/*.py` | Rotinas periódicas |
-| **Prediction** | `prediction.py` | Lógica de palpites |
-| **Scrapers** | `scrapers/*.py` | Coleta de dados externos |
-| **Service** | `telegram/service.py` | Envio/edição + persistência |
+| **Jobs** | `jobs/ebasketball.py` | Ciclo completo de palpites |
+| **Prediction** | `prediction.py` | Lógica de cálculo |
+| **Scraper** | `scrapers/tipmanager.py` | Coleta tipmanager.net |
+| **Service** | `telegram/service.py` | Envio/edição com persistência |
 | **Client** | `telegram/client.py` | Telegram Bot API (retry 429) |
 | **Model** | `infra/models.py` | Entidades SQLAlchemy |
 | **Config** | `infra/config.py` | Variáveis de ambiente |
@@ -186,49 +191,10 @@ Schema isolado via `DB_SCHEMA` (default `ebasketball_bot`) — permite multi-ten
 
 Dependência flui para baixo. Nunca para cima.
 
-## Polling vs Webhook
+## Proteções
 
-| Modo | Quando usar | `TELEGRAM_POLLING` |
-|------|------------|-------------------|
-| **Polling** | Dev local, sem URL pública | `true` |
-| **Webhook** | Produção, deploy com HTTPS | `false` |
-
-## Timezone
-
-Horários internos sempre em **BRT** (`America/Sao_Paulo`). Conversão na entrada:
-
-| Fonte | Var de ambiente | Default | Observação |
-|-------|----------------|---------|------------|
-| aceodds | `ACEODDS_TIMEZONE` | `America/Sao_Paulo` | Adapta pelo IP do servidor |
-| totalcorner | `TOTALCORNER_TIMEZONE` | `Europe/London` | BST (GMT+1) no verão |
-
-**Como calibrar** (após mudar servidor):
-1. Acessar `/api/debug/aceodds-raw` e `/api/debug/totalcorner-raw`
-2. Comparar `time_raw` dos jogos com `server_now_utc` / `server_now_brt`
-3. Ajustar env vars conforme timezone que o site retorna
-
-Pontos de conversão:
-- `aceodds.py`: `ACEODDS_TZ` → BRT no `kickoff` de cada `Match`
-- `totalcorner.py`: `SITE_TZ` → BRT no `kickoff_brt` de cada `MatchResult`
-- `eBasketball.py`: `_make_match_key` força BRT, `_format_brt_time` força BRT
-- `update_results`: usa `pred.kickoff_brt` (original) na mensagem editada, nunca o horário do resultado
-
-## Proteções no update_results
-
-- Predictions com `kickoff_brt > agora` são ignoradas (jogo futuro)
-- Match por `home_player + away_player` (case-insensitive)
-- Horário da mensagem editada preserva o `kickoff_brt` original da prediction
-
-## Variáveis de Ambiente
-
-| Variável | Obrigatória | Default | Descrição |
-|----------|-------------|---------|-----------|
-| `TELEGRAM_BOT_TOKEN` | Sim | `""` | Token do bot |
-| `TELEGRAM_CHANNEL_ID` | Sim | `0` | ID do canal (começa com -100) |
-| `TELEGRAM_WEBHOOK_SECRET` | Não | `""` | Secret pra validar webhook |
-| `DATABASE_URL` | Sim | `postgresql+asyncpg://...` | URL do banco (aceita `postgresql://`, converte auto) |
-| `TELEGRAM_POLLING` | Não | `true` | `true`=dev local, `false`=prod webhook |
-| `LOG_LEVEL` | Não | `INFO` | Nível de log |
-| `ACEODDS_TIMEZONE` | Não | `America/Sao_Paulo` | Timezone dos horários do aceodds |
-| `TOTALCORNER_TIMEZONE` | Não | `Europe/London` | Timezone dos horários do totalcorner |
-| `DB_SCHEMA` | Não | `ebasketball_bot` | Schema PostgreSQL (vazio=public) |
+- **Deduplicação**: `match_key` único no banco — mesmo jogo nunca é postado duas vezes
+- **Jogo futuro**: `update_results` ignora predictions com `kickoff_brt > agora`
+- **Match por nome**: case-insensitive (`lower()`) — tolerante a capitalização do site
+- **Rate limit**: retry automático em 429 com `retry_after` do Telegram
+- **SSL**: injetado apenas quando `sslmode=require/verify` ou `supabase` na URL

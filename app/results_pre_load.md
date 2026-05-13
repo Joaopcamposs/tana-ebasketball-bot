@@ -1,3 +1,80 @@
+13/05/2026, 11:39
+Terminator
+ORL Magic
+60 : 53
+Order
+DAL Mavericks
+H2H GG League
+13/05/2026, 11:35
+Rider
+LA Lakers
+77 : 54
+Wolverine
+NY Knicks
+H2H GG League
+13/05/2026, 11:31
+Thunder
+ORL Magic
+65 : 58
+Ramz
+DEN Nuggets
+H2H GG League
+13/05/2026, 11:27
+Visionary
+DEN Nuggets
+66 : 56
+Exo
+ORL Magic
+H2H GG League
+13/05/2026, 11:07
+Order
+LA Lakers
+48 : 52
+Terminator
+NY Knicks
+H2H GG League
+13/05/2026, 11:03
+Rider
+BKN Nets
+65 : 54
+Unbreakable
+MIA Heat
+H2H GG League
+13/05/2026, 10:59
+Thunder
+ORL Magic
+62 : 48
+Specter
+DAL Mavericks
+H2H GG League
+13/05/2026, 10:55
+Visionary
+DEN Nuggets
+64 : 58
+Carnage
+CHA Hornets
+H2H GG League
+13/05/2026, 10:35
+Tranquility
+CHA Hornets
+61 : 45
+Order
+DAL Mavericks
+H2H GG League
+13/05/2026, 10:31
+Abyss
+OKC Thunder
+59 : 55
+Wolverine
+NY Knicks
+H2H GG League
+13/05/2026, 10:27
+Godfather
+CHA Hornets
+54 : 55
+Ramz
+DEN Nuggets
+H2H GG League
 13/05/2026, 10:23
 Td24
 DAL Mavericks

@@ -3,7 +3,17 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Float, Integer, MetaData, String, func
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    Float,
+    Integer,
+    MetaData,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from infra.config import settings
@@ -42,26 +52,18 @@ class SentMessage(TimestampMixin, Base):
     reference_key: Mapped[str | None] = mapped_column(index=True, default=None)
 
 
-class PlayerLocalStats(TimestampMixin, Base):
-    """Estatísticas locais acumuladas por jogador."""
+class PlayerMatchResult(TimestampMixin, Base):
+    """Resultado individual de uma partida por jogador."""
 
-    __tablename__ = "player_local_stats"
+    __tablename__ = "player_match_results"
+    __table_args__ = (UniqueConstraint("player", "kickoff_brt", name="uq_player_kickoff"),)
 
-    player: Mapped[str] = mapped_column(String(100), primary_key=True)
-    matches_played: Mapped[int] = mapped_column(Integer, default=0)
-    goals_for: Mapped[int] = mapped_column(Integer, default=0)
-    goals_against: Mapped[int] = mapped_column(Integer, default=0)
-    wins: Mapped[int] = mapped_column(Integer, default=0)
-    draws: Mapped[int] = mapped_column(Integer, default=0)
-    losses: Mapped[int] = mapped_column(Integer, default=0)
-
-    @property
-    def avg_goals_for(self) -> float:
-        return self.goals_for / self.matches_played if self.matches_played else 0.0
-
-    @property
-    def avg_goals_against(self) -> float:
-        return self.goals_against / self.matches_played if self.matches_played else 0.0
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid7)
+    player: Mapped[str] = mapped_column(String(100), index=True)
+    opponent: Mapped[str] = mapped_column(String(100))
+    kickoff_brt: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    points_for: Mapped[int] = mapped_column(Integer)
+    points_against: Mapped[int] = mapped_column(Integer)
 
 
 class Prediction(TimestampMixin, Base):
