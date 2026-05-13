@@ -1,10 +1,8 @@
 """Job principal — ciclo completo eBasketball a cada 4 minutos."""
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
-
-UTC = timezone.utc
 
 from prediction import generate_prediction
 from scheduler import register
@@ -286,7 +284,7 @@ async def simulate_e2e(limit: int = 5) -> list[dict]:
     if not chat_id:
         return []
 
-    results = results[:limit]
+    results = list(reversed(results[:limit]))
     output: list[dict] = []
 
     async with async_session() as session:

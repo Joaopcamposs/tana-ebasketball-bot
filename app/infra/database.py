@@ -43,6 +43,7 @@ if settings.db_schema:
     def _set_search_path(dbapi_conn, connection_record):
         cursor = dbapi_conn.cursor()
         cursor.execute(f"SET search_path TO {settings.db_schema}, public")
+        cursor.execute("SET timezone TO 'UTC'")
         cursor.close()
 
 
