@@ -3,7 +3,7 @@
 
 async def test_health(client):
     """Verifica health check."""
-    resp = await client.get("/health")
+    resp = await client.get("/api/health")
     assert resp.status_code == 200
     assert resp.json() == {"status": "healthy"}
 
@@ -42,9 +42,7 @@ async def test_edit_endpoint_not_found(client):
 
 async def test_edit_endpoint_success(client):
     """Verifica edição via endpoint após envio."""
-    await client.post(
-        "/api/send", params={"text": "original", "reference_key": "edit-me"}
-    )
+    await client.post("/api/send", params={"text": "original", "reference_key": "edit-me"})
     resp = await client.put(
         "/api/edit", params={"reference_key": "edit-me", "text": "updated"}
     )

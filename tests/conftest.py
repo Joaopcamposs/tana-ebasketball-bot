@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost:1/test")
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "fake-token")
+os.environ["DB_SCHEMA"] = ""
 
 from infra.models import Base
 
@@ -37,9 +38,11 @@ async def db_session(db_engine) -> AsyncGenerator[AsyncSession]:
 @pytest.fixture
 def mock_telegram():
     """Mock das chamadas à API do Telegram."""
-    with patch("app.telegram.client.get_client") as mock_get:
+    with patch("telegram.client.get_client") as mock_get:
         mock_client = AsyncMock()
         mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {"content-type": "application/json"}
         mock_response.json.return_value = {
             "ok": True,
             "result": {"message_id": 42},
@@ -53,7 +56,8 @@ def mock_telegram():
 @pytest.fixture
 async def client(mock_telegram) -> AsyncGenerator[AsyncClient]:
     """Client HTTP para testar endpoints FastAPI."""
-    from app.main import app
+    from main import app
+
     from infra.config import settings
     from infra.database import get_session
 
