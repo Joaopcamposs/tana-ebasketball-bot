@@ -1,13 +1,12 @@
 """Job principal — ciclo completo eBasketball a cada 4 minutos."""
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from prediction import generate_prediction
 from scheduler import register
-from scrapers.aceodds import fetch_upcoming_matches
-from scrapers.totalcorner import fetch_results
+from scrapers.tipmanager import MatchResult, UpcomingMatch, fetch_all, fetch_results
 from sqlalchemy import select
 from telegram import client
 
@@ -23,7 +22,7 @@ BRT = ZoneInfo("America/Sao_Paulo")
 def _format_brt_time(dt: datetime) -> str:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=BRT)
-    return dt.astimezone(BRT).strftime("%H:%M")
+    return dt.astimezone(BRT).strftime("%H:%M (BRT)")
 
 
 def _make_match_key(kickoff: datetime, home_player: str, away_player: str) -> str:
@@ -31,34 +30,53 @@ def _make_match_key(kickoff: datetime, home_player: str, away_player: str) -> st
     return f"{kickoff_brt.strftime('%Y%m%d_%H%M')}_{home_player}_{away_player}"
 
 
-def _format_prediction_message(pred) -> str:
-    m = pred.match
-    over_pct_text = f" ({pred.over_pct:.0f}%)" if pred.over_pct is not None else ""
-
-    reasons = (
-        f"👨🏻{m.home_player}: AVG [GF: {pred.home_avg_gf:.2f} | GA: {pred.home_avg_ga:.2f}]\n"
-        f"🧔🏻{m.away_player}: AVG [GF: {pred.away_avg_gf:.2f} | GA: {pred.away_avg_ga:.2f}]\n"
-        f"Frequência de gols acima de {pred.over_line}{over_pct_text}"
+def _format_prediction_message(pred, match: UpcomingMatch | None = None) -> str:
+    m = pred.match if pred else match
+    assert m is not None
+    header = (
+        "E-basketball H2h 4x5min - OVER @1.5+\n\n" if pred else "E-basketball H2h 4x5min\n\n"
     )
 
-    return (
-        "E-basketball H2h 4x5min - LIVE @1.5+\n\n"
+    base = (
+        f"{header}"
         f"🎯 {m.home_player} ({m.home_team}) vs "
         f"{m.away_player} ({m.away_team})\n"
-        f"⚽️ Gols esperado: {pred.expected_total_goals:.2f}\n"
-        f"🥅 Over {pred.over_line} gols\n"
-        f"🕒 {_format_brt_time(m.kickoff)}\n\n"
-        f"📝Análise:\n{reasons}"
+        f"🕒 {_format_brt_time(m.kickoff_brt)}\n"
+    )
+
+    if not pred:
+        return base + "\n📊 Coletando dados..."
+
+    return (
+        base
+        + f"🏀 Total esperado: {pred.expected_total:.1f} pts\n"
+        + f"📈 Over {pred.over_line}\n\n"
+        + "📝Análise:\n"
+        + f"👨🏻{m.home_player}: AVG [PF: {pred.home_avg_pf:.1f} | PA: {pred.home_avg_pa:.1f}]\n"
+        + f"🧔🏻{m.away_player}: AVG [PF: {pred.away_avg_pf:.1f} | PA: {pred.away_avg_pa:.1f}]\n"
+        + f"Total esperado: {pred.expected_total:.1f} pts"
     )
 
 
-async def send_predictions(window_minutes: int = 10) -> list[dict]:
+async def send_predictions(window_minutes: int | None = 10) -> list[dict]:
+    """Busca jogos próximos, gera palpites e envia no Telegram.
+
+    window_minutes=None envia todos os upcoming sem filtro de janela.
     """
-    Busca jogos próximos, gera palpites e envia no Telegram. Retorna palpites enviados.
-    """
-    matches = await fetch_upcoming_matches(window_minutes=window_minutes)
-    if not matches:
-        logger.info("Nenhum jogo nos próximos %d minutos", window_minutes)
+    upcoming, _ = await fetch_all()
+    if window_minutes is not None:
+        now_brt = datetime.now(BRT)
+        since = now_brt - timedelta(minutes=4)
+        cutoff = now_brt + timedelta(minutes=window_minutes)
+        logger.info(
+            "Filtro janela: since=%s cutoff=%s | kickoffs=%s",
+            since.strftime("%H:%M"),
+            cutoff.strftime("%H:%M"),
+            [m.kickoff_brt.strftime("%H:%M%z") for m in upcoming],
+        )
+        upcoming = [m for m in upcoming if since <= m.kickoff_brt <= cutoff]
+    if not upcoming:
+        logger.info("Nenhum jogo upcoming encontrado")
         return []
 
     chat_id = settings.telegram_channel_id
@@ -69,8 +87,10 @@ async def send_predictions(window_minutes: int = 10) -> list[dict]:
     sent: list[dict] = []
 
     async with async_session() as session:
-        for match in matches:
-            match_key = _make_match_key(match.kickoff, match.home_player, match.away_player)
+        for match in upcoming:
+            match_key = _make_match_key(
+                match.kickoff_brt, match.home_player, match.away_player
+            )
 
             existing = await session.execute(
                 select(Prediction).where(Prediction.match_key == match_key)
@@ -80,7 +100,7 @@ async def send_predictions(window_minutes: int = 10) -> list[dict]:
                 continue
 
             pred = await generate_prediction(session, match)
-            text = _format_prediction_message(pred)
+            text = _format_prediction_message(pred, match)
 
             try:
                 result = await client.send_message(chat_id, text)
@@ -91,13 +111,13 @@ async def send_predictions(window_minutes: int = 10) -> list[dict]:
 
             prediction = Prediction(
                 match_key=match_key,
-                kickoff_brt=match.kickoff,
+                kickoff_brt=match.kickoff_brt,
                 home_team=match.home_team,
                 home_player=match.home_player,
                 away_team=match.away_team,
                 away_player=match.away_player,
-                expected_total_goals=pred.expected_total_goals,
-                over_line=pred.over_line,
+                expected_total_goals=pred.expected_total if pred else None,
+                over_line=pred.over_line if pred else None,
                 message_id=msg_id,
                 status="pending",
             )
@@ -110,8 +130,8 @@ async def send_predictions(window_minutes: int = 10) -> list[dict]:
                     "match_key": match_key,
                     "home_player": match.home_player,
                     "away_player": match.away_player,
-                    "expected_total_goals": pred.expected_total_goals,
-                    "over_line": pred.over_line,
+                    "expected_total": pred.expected_total if pred else None,
+                    "over_line": pred.over_line if pred else None,
                     "message_id": msg_id,
                 }
             )
@@ -120,10 +140,8 @@ async def send_predictions(window_minutes: int = 10) -> list[dict]:
 
 
 async def update_results() -> list[dict]:
-    """
-    Consulta resultados finalizados e atualiza palpites pendentes. Retorna atualizados.
-    """
-    results = await fetch_results(finished_only=True)
+    """Consulta resultados finalizados e atualiza palpites pendentes."""
+    results = await fetch_results()
     if not results:
         return []
 
@@ -145,7 +163,7 @@ async def update_results() -> list[dict]:
                 logger.debug("Prediction %s ainda não iniciou, ignorando", pred.match_key)
                 continue
 
-            matched = None
+            matched: MatchResult | None = None
             for r in results:
                 if (
                     r.home_player.lower() == pred.home_player.lower()
@@ -157,13 +175,27 @@ async def update_results() -> list[dict]:
             if not matched:
                 continue
 
-            pred.home_goals = matched.home_goals
-            pred.away_goals = matched.away_goals
-            total = matched.total_goals
-            pred.success = total > pred.over_line
+            pred.home_goals = matched.home_score
+            pred.away_goals = matched.away_score
+            total = matched.total_score
+            if pred.over_line is not None:
+                pred.success = total > pred.over_line
             pred.status = "done"
 
-            icon = "✅" if pred.success else "❌"
+            has_prediction = pred.over_line is not None
+            icon = ("✅" if pred.success else "❌") if has_prediction else ""
+
+            result_line = (
+                f"Resultado: {matched.home_score} - {matched.away_score} (total: {total})\n\n"
+            )
+            pred_line = (
+                (
+                    f"🏀 Total esperado: {pred.expected_total_goals:.1f} pts\n"
+                    f"📈 Over {pred.over_line}\n"
+                )
+                if has_prediction
+                else ""
+            )
 
             try:
                 await client.api_call(
@@ -172,15 +204,13 @@ async def update_results() -> list[dict]:
                     message_id=pred.message_id,
                     parse_mode="HTML",
                     text=(
-                        f"E-basketball H2h 4x5min - LIVE @1.5+\n\n"
+                        f"E-basketball H2h 4x5min\n\n"
                         f"🎯 {pred.home_player} ({pred.home_team}) vs "
                         f"{pred.away_player} ({pred.away_team})\n"
-                        f"⚽️ Gols esperado: {pred.expected_total_goals:.2f}\n"
-                        f"🥅 Over {pred.over_line} gols\n"
-                        f"🕒 {_format_brt_time(pred.kickoff_brt)}\n\n"
-                        f"Resultado: {matched.home_goals} - {matched.away_goals} "
-                        f"(total: {total})\n\n"
-                        f"{icon}"
+                        f"🕒 {_format_brt_time(pred.kickoff_brt)}\n"
+                        + pred_line
+                        + f"\n{result_line}"
+                        + icon
                     ),
                 )
             except Exception:
@@ -190,17 +220,17 @@ async def update_results() -> list[dict]:
             logger.info(
                 "Resultado atualizado: %s %d-%d %s",
                 pred.match_key,
-                matched.home_goals,
-                matched.away_goals,
+                matched.home_score,
+                matched.away_score,
                 icon,
             )
 
             updated.append(
                 {
                     "match_key": pred.match_key,
-                    "home_goals": matched.home_goals,
-                    "away_goals": matched.away_goals,
-                    "total_goals": total,
+                    "home_score": matched.home_score,
+                    "away_score": matched.away_score,
+                    "total_score": total,
                     "over_line": pred.over_line,
                     "success": pred.success,
                 }
@@ -211,11 +241,11 @@ async def update_results() -> list[dict]:
     return updated
 
 
-async def _update_local_stats(session, result) -> None:
+async def _update_local_stats(session, result: MatchResult) -> None:
     """Atualiza estatísticas locais dos dois jogadores após resultado."""
     for player, gf, ga in [
-        (result.home_player, result.home_goals, result.away_goals),
-        (result.away_player, result.away_goals, result.home_goals),
+        (result.home_player, result.home_score, result.away_score),
+        (result.away_player, result.away_score, result.home_score),
     ]:
         stmt = select(PlayerLocalStats).where(PlayerLocalStats.player == player)
         stats = (await session.execute(stmt)).scalar_one_or_none()
@@ -246,11 +276,9 @@ async def _update_local_stats(session, result) -> None:
 
 async def simulate_e2e(limit: int = 5) -> list[dict]:
     """Teste e2e: pega resultados reais, gera palpites, envia e atualiza com resultado."""
-    results = await fetch_results(finished_only=True)
+    results = await fetch_results()
     if not results:
         return []
-
-    from scrapers.aceodds import Match
 
     chat_id = settings.telegram_channel_id
     if not chat_id:
@@ -261,8 +289,8 @@ async def simulate_e2e(limit: int = 5) -> list[dict]:
 
     async with async_session() as session:
         for r in results:
-            match = Match(
-                kickoff=r.kickoff_brt,
+            match = UpcomingMatch(
+                kickoff_brt=r.kickoff_brt,
                 home_team=r.home_team,
                 home_player=r.home_player,
                 away_team=r.away_team,
@@ -278,6 +306,9 @@ async def simulate_e2e(limit: int = 5) -> list[dict]:
                 continue
 
             pred = await generate_prediction(session, match)
+            if pred is None:
+                logger.info("Simulate e2e: sem dados para %s", match_key)
+                continue
             text = _format_prediction_message(pred)
 
             try:
@@ -294,7 +325,7 @@ async def simulate_e2e(limit: int = 5) -> list[dict]:
                 home_player=r.home_player,
                 away_team=r.away_team,
                 away_player=r.away_player,
-                expected_total_goals=pred.expected_total_goals,
+                expected_total_goals=pred.expected_total,
                 over_line=pred.over_line,
                 message_id=msg_id,
                 status="pending",
@@ -302,9 +333,9 @@ async def simulate_e2e(limit: int = 5) -> list[dict]:
             session.add(prediction)
             await session.commit()
 
-            total = r.total_goals
-            prediction.home_goals = r.home_goals
-            prediction.away_goals = r.away_goals
+            total = r.total_score
+            prediction.home_goals = r.home_score
+            prediction.away_goals = r.away_score
             prediction.success = total > pred.over_line
             prediction.status = "done"
 
@@ -317,13 +348,13 @@ async def simulate_e2e(limit: int = 5) -> list[dict]:
                     message_id=msg_id,
                     parse_mode="HTML",
                     text=(
-                        f"E-basketball H2h 4x5min - LIVE @1.5+\n\n"
+                        f"E-basketball H2h 4x5min - OVER @1.5+\n\n"
                         f"🎯 {r.home_player} ({r.home_team}) vs "
                         f"{r.away_player} ({r.away_team})\n"
-                        f"⚽️ Gols esperado: {pred.expected_total_goals:.2f}\n"
-                        f"🥅 Over {pred.over_line} gols\n"
+                        f"🏀 Total esperado: {pred.expected_total:.1f} pts\n"
+                        f"📈 Over {pred.over_line}\n"
                         f"🕒 {_format_brt_time(r.kickoff_brt)}\n\n"
-                        f"Resultado: {r.home_goals} - {r.away_goals} "
+                        f"Resultado: {r.home_score} - {r.away_score} "
                         f"(total: {total})\n\n"
                         f"{icon}"
                     ),
@@ -339,10 +370,10 @@ async def simulate_e2e(limit: int = 5) -> list[dict]:
                     "match_key": match_key,
                     "home_player": r.home_player,
                     "away_player": r.away_player,
-                    "expected_total_goals": pred.expected_total_goals,
+                    "expected_total": pred.expected_total,
                     "over_line": pred.over_line,
-                    "result": f"{r.home_goals}-{r.away_goals}",
-                    "total_goals": total,
+                    "result": f"{r.home_score}-{r.away_score}",
+                    "total_score": total,
                     "success": prediction.success,
                 }
             )
@@ -350,8 +381,8 @@ async def simulate_e2e(limit: int = 5) -> list[dict]:
             logger.info(
                 "Simulate e2e: %s → %d-%d %s",
                 match_key,
-                r.home_goals,
-                r.away_goals,
+                r.home_score,
+                r.away_score,
                 icon,
             )
 

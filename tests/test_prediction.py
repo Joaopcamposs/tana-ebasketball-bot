@@ -1,89 +1,93 @@
-"""Testes motor de palpites."""
+"""Testes motor de palpites — eBasketball."""
 
 from datetime import datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
-from prediction import (
-    PredictionResult,
-    _pick_over_line,
-    generate_prediction,
-)
-from scrapers.aceodds import Match
-from scrapers.totalcorner import PlayerGoalStats, PlayerStats
+from prediction import PredictionResult, _pick_over_line, generate_prediction
+from scrapers.tipmanager import UpcomingMatch
 
 BRT = ZoneInfo("America/Sao_Paulo")
 
 
-def _make_match() -> Match:
-    return Match(
-        kickoff=datetime(2026, 5, 12, 14, 0, tzinfo=BRT),
-        home_team="France",
+def _make_match() -> UpcomingMatch:
+    return UpcomingMatch(
+        kickoff_brt=datetime(2026, 5, 12, 14, 0, tzinfo=BRT),
+        home_team="Lakers",
         home_player="Grellz",
-        away_team="Germany",
+        away_team="Celtics",
         away_player="Simaponika",
     )
 
 
-def test_pick_over_line():
-    assert _pick_over_line(5.8) == 4.5
-    assert _pick_over_line(6.5) == 5.5
-    assert _pick_over_line(3.2) == 2.5
-    assert _pick_over_line(1.0) == 1.5
+def _make_local_stats(player: str, mp: int, gf: int, ga: int):
+    from infra.models import PlayerLocalStats
+
+    return PlayerLocalStats(
+        player=player,
+        matches_played=mp,
+        goals_for=gf,
+        goals_against=ga,
+        wins=0,
+        draws=0,
+        losses=0,
+    )
+
+
+def test_pick_over_line_basketball():
+    assert _pick_over_line(107.0) == 99.5
+    assert _pick_over_line(115.0) == 107.5
+    assert _pick_over_line(95.0) == 90.5
+    assert _pick_over_line(80.0) == 90.5
 
 
 @pytest.mark.asyncio
-async def test_generate_prediction_external():
-    match = _make_match()
+async def test_generate_prediction_returns_none_when_no_data():
+    """Sem stats no banco → não gera palpite."""
+    session = AsyncMock()
+    # scalar_one_or_none → None (nenhum jogador), one() → (None, None, None)
+    mock_player = MagicMock()
+    mock_player.scalar_one_or_none.return_value = None
+    mock_global = MagicMock()
+    mock_global.one.return_value = (None, None, None)
+    session.execute.side_effect = [mock_player, mock_player, mock_global]
 
-    ext_stats = [
-        PlayerStats("Grellz", 50, 30, 5, 15, 180, 120, 3.6, 2.4, 95),
-        PlayerStats("Simaponika", 50, 25, 10, 15, 150, 130, 3.0, 2.6, 85),
-    ]
-    goal_stats = [
-        PlayerGoalStats("Grellz", 50, 3.6, 2.4, {"4.5": 80.0, "5.5": 60.0}),
-        PlayerGoalStats("Simaponika", 50, 3.0, 2.6, {"4.5": 70.0, "5.5": 50.0}),
-    ]
+    result = await generate_prediction(session, _make_match())
+    assert result is None
 
-    from unittest.mock import MagicMock
 
-    mock_session = AsyncMock()
-    mock_result = MagicMock()
-    mock_result.scalar_one_or_none.return_value = None
-    mock_session.execute.return_value = mock_result
+@pytest.mark.asyncio
+async def test_generate_prediction_both_local():
+    home = _make_local_stats("Grellz", 5, 280, 250)  # 56 PF, 50 PA
+    away = _make_local_stats("Simaponika", 5, 260, 270)  # 52 PF, 54 PA
 
-    with (
-        patch("prediction.fetch_player_stats", return_value=ext_stats),
-        patch("prediction.fetch_goal_stats", return_value=goal_stats),
-    ):
-        pred = await generate_prediction(mock_session, match)
+    session = AsyncMock()
+    results = [MagicMock(), MagicMock()]
+    results[0].scalar_one_or_none.return_value = home
+    results[1].scalar_one_or_none.return_value = away
+    session.execute.side_effect = results
+
+    pred = await generate_prediction(session, _make_match())
 
     assert isinstance(pred, PredictionResult)
-    assert pred.home_avg_gf == 3.6
-    assert pred.away_avg_gf == 3.0
-    assert pred.expected_total_goals > 0
-    assert pred.over_line >= 1.5
-    assert "external" in pred.source
+    assert pred.home_avg_pf == home.avg_goals_for
+    assert pred.away_avg_pf == away.avg_goals_for
+    assert pred.source == "home=local,away=local"
+    assert pred.over_line >= 90.5
 
 
 @pytest.mark.asyncio
-async def test_generate_prediction_default_fallback():
-    match = _make_match()
+async def test_generate_prediction_returns_none_when_one_missing():
+    """Um jogador sem dados → None (não usa fallback)."""
+    home = _make_local_stats("Grellz", 5, 280, 250)
 
-    from unittest.mock import MagicMock
+    session = AsyncMock()
+    mock_home = MagicMock()
+    mock_home.scalar_one_or_none.return_value = home
+    mock_away = MagicMock()
+    mock_away.scalar_one_or_none.return_value = None
+    session.execute.side_effect = [mock_home, mock_away]
 
-    mock_session = AsyncMock()
-    mock_result = MagicMock()
-    mock_result.scalar_one_or_none.return_value = None
-    mock_session.execute.return_value = mock_result
-
-    with (
-        patch("prediction.fetch_player_stats", return_value=[]),
-        patch("prediction.fetch_goal_stats", return_value=[]),
-    ):
-        pred = await generate_prediction(mock_session, match)
-
-    assert pred.home_avg_gf == 2.8
-    assert pred.away_avg_gf == 2.8
-    assert "default" in pred.source
+    result = await generate_prediction(session, _make_match())
+    assert result is None

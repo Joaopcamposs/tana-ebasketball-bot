@@ -10,7 +10,7 @@ BRT = ZoneInfo("America/Sao_Paulo")
 
 def test_format_brt_time():
     dt = datetime(2026, 5, 12, 14, 30, tzinfo=BRT)
-    assert _format_brt_time(dt) == "14:30"
+    assert _format_brt_time(dt) == "14:30 (BRT)"
 
 
 def test_make_match_key():
